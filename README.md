@@ -107,15 +107,6 @@ python3 ds_test.py "python3 client.py" -n -p 50000 -c TestConfigs
 
 - There are no unit tests included; the repository provides an integration harness that executes `ds-server` and clients as subprocesses.
 
-##  Showcase / Screenshots
-
-Suggested screenshot names for documentation:
-
-```
-screenshots/benchmark_table.png        # Console table output from mark_client.py
-screenshots/simulation_trace.png       # ds-server verbose event trace
-```
-
 ##  Design Decisions & Architecture Notes
 
 The project uses a focused `DSClient` class in `client.py` to separate networking, protocol parsing, and scheduling decisions. Networking uses a line-buffered TCP socket that matches the `ds-server` protocol (newline-terminated messages can be toggled with `-n`).
@@ -127,17 +118,3 @@ Benchmark scripts (`ref_results.py`, `mark_client.py`, `ds_test.py`) are designe
 ##  Contact & Attribution
 
 Built with  by the project author. For questions or collaboration, open an issue or contact via the repository profile.
-
-##  License
-
-License not specified in the repository.
-
----
-
-If you want, I can now:
-
-- run the test harness to produce `results/test_results.json` (requires `ds-server`/`ds-client` present),
-- regenerate reference results from `ds-client` across `TestConfigs/`, or
-- add a short example script that runs one config and captures the console output for documentation.
-
-Reply which next step you prefer.
