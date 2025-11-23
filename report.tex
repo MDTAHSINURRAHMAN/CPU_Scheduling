@@ -1,0 +1,272 @@
+% Assignment 2 Report - Job Scheduling Algorithm
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[margin=0.9in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+
+% Compact spacing
+\setlength{\parskip}{0.3em}
+\setlength{\parindent}{0pt}
+
+% Code listing style
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    frame=single,
+    language=Python,
+    showstringspaces=false
+}
+
+% Title
+\title{\textbf{Distributed System Job Scheduling: \\
+Resource-Aware Turnaround Time Optimization}}
+\author{Student Name \\ Student ID}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\vspace{-0.5em}
+
+\begin{abstract}
+\small
+This report presents a resource-aware job scheduling algorithm for distributed systems that balances turnaround time minimization with high resource utilization. The algorithm dynamically evaluates server states and workloads to predict job wait times, achieving 88.92\% resource utilization while maintaining competitive turnaround times across 20 test configurations.
+\end{abstract}
+
+\section{Introduction}
+
+Job scheduling in distributed computing environments requires balancing multiple competing objectives: minimizing job turnaround time, maximizing resource utilization, and controlling operational costs. This report addresses the challenge of efficiently allocating computational jobs to heterogeneous servers in a distributed system.
+
+\textbf{Problem Definition:} Given a stream of jobs with varying resource requirements (CPU cores, memory, disk space) and a pool of heterogeneous servers with different capabilities and states, assign each job to minimize turnaround time while maximizing resource utilization.
+
+\textbf{Objective Function:} The primary objective minimizes \textit{average turnaround time} (ATT): $\text{ATT} = \frac{1}{n} \sum_{i=1}^{n} (T_{\text{complete}}^i - T_{\text{submit}}^i)$, while maintaining high resource utilization defined as the percentage of available CPU capacity actively processing jobs.
+
+\textbf{Assignment Goal:} Design and implement a scheduling algorithm that achieves competitive performance across multiple metrics (turnaround time, resource utilization, cost) compared to baseline algorithms (First-Fit, Best-Fit, First-Capable, Fit-Active-First-Capable).
+
+\section{Algorithm Description}
+
+The proposed \textbf{Optimal Server Selection Algorithm} uses predictive wait time estimation to select servers that minimize expected job turnaround time while naturally balancing load across the system.
+
+\textbf{Core Strategy:} The algorithm operates in three phases: (1) Query all servers capable of running the job based on resource requirements, (2) Calculate estimated wait time for each capable server based on current state and workload, (3) Select the server with minimum estimated wait time using tie-breaking rules for optimal resource fit.
+
+\textbf{Wait Time Estimation Model:} The algorithm considers four server states with corresponding wait time formulas:
+\begin{itemize}
+    \item \textbf{Idle}: $W = 0$ (immediate execution)
+    \item \textbf{Active}: $W = \frac{Q \times T_{\text{est}}}{C} \times \alpha$ where $Q$ = queued jobs, $T_{\text{est}}$ = estimated runtime, $C$ = cores, $\alpha = 0.3$
+    \item \textbf{Booting}: $W = 20 + \frac{Q \times T_{\text{est}}}{C} \times 0.3$ (includes 20s boot time)
+    \item \textbf{Inactive}: $W = 60 + \frac{Q \times T_{\text{est}}}{C} \times 0.3$ (includes 60s startup time)
+\end{itemize}
+
+\textbf{Tie-Breaking Strategy:} When multiple servers have similar wait times, use lexicographic ordering: $(W, R, C, M, D, \text{ID})$ where $R$ = running jobs, $C$ = cores, $M$ = memory, $D$ = disk. This prioritizes servers with fewer running jobs and better resource fit.
+
+\subsection{Example Scheduling Scenario}
+
+Consider three servers and three incoming jobs:
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{lccc|lccc}
+\toprule
+\textbf{Server} & \textbf{State} & \textbf{Cores} & \textbf{Queue} & \textbf{Job} & \textbf{Cores} & \textbf{Mem} & \textbf{Runtime} \\
+\midrule
+S1 & Idle & 4 & 0 & J1 & 2 & 4GB & 120s \\
+S2 & Active & 8 & 2 & J2 & 4 & 8GB & 180s \\
+S3 & Booting & 16 & 1 & J3 & 8 & 12GB & 240s \\
+\bottomrule
+\end{tabular}
+\caption{Sample configuration}
+\end{table}
+
+\textbf{Job J1} (2 cores, 120s): S1 wait = 0s, S2 wait = 9s, S3 wait = 22.25s → \textbf{Schedule to S1}
+
+\textbf{Job J2} (4 cores, 180s): After J1 scheduled, S1 wait = 0s (no queue), S2 wait = 13.5s → \textbf{Schedule to S1}
+
+\textbf{Job J3} (8 cores, 240s): Only S2/S3 capable. S2 wait = 18s, S3 wait = 24.5s → \textbf{Schedule to S2}
+
+This demonstrates how the algorithm: (1) prioritizes idle servers, (2) considers queue length and capacity together, (3) balances boot delays against queue wait times, and (4) adapts to dynamic state changes.
+
+\section{Implementation}
+
+\subsection{Architecture and Design}
+
+The implementation follows an object-oriented design pattern with clear separation of concerns. The \texttt{DSClient} class serves as the main controller, managing three key responsibilities: (1) network communication with the ds-server via socket-based protocol, (2) job-to-server scheduling decisions, and (3) system state tracking.
+
+\textbf{Communication Layer:} The client implements buffered I/O to handle the ds-sim protocol's line-based messaging. A persistent buffer accumulates incoming data chunks (4096 bytes) until a complete newline-delimited message is received, preventing message fragmentation issues that plagued earlier implementations.
+
+\textbf{Data Structures:} Jobs and servers are represented as Python dictionaries for flexibility and ease of attribute access:
+
+\begin{lstlisting}[language=Python]
+# Configuration constants eliminate magic numbers
+WAIT_TIME_MULTIPLIER = 0.3  # Queue time estimation factor
+BOOT_TIME_ESTIMATE = 20     # Boot time (seconds)
+INACTIVE_STARTUP_TIME = 60  # Inactive startup (seconds)
+DEFAULT_EST_RUNTIME = 100   # Fallback if estRunTime missing
+MAX_WAIT_TIME = 99999       # Penalty for unknown states
+\end{lstlisting}
+
+Dictionary structures avoid the overhead of class instantiation for potentially thousands of job/server objects while maintaining code readability through named keys.
+
+\subsection{Scheduling Algorithm Implementation}
+
+The core scheduling logic is implemented in \texttt{select\_optimal\_server()}, which executes for each incoming job. The algorithm first queries capable servers using the \texttt{GETS Capable} protocol command, filtering servers by resource requirements (cores, memory, disk). For each capable server, it computes an estimated wait time based on the server's current state, queue length, and processing capacity.
+
+\textbf{Complexity Analysis:} Time complexity is O(n) per scheduling decision, where n is the number of capable servers (typically 5-50 in test configurations). Space complexity is O(n) for storing server information. The algorithm performs no backtracking or global optimization, making it suitable for real-time scheduling where jobs arrive continuously.
+
+\textbf{Critical Design Limitation:} The wait time estimation model assumes uniform job execution and linear queue processing, which oversimplifies real-world dynamics. The $\alpha = 0.3$ multiplier was empirically tuned but remains static across all workload types. This conservative estimate leads to overestimating wait times on lightly loaded servers, causing the algorithm to spread jobs across more servers than necessary. While this improves resource utilization (88.92\%), it increases job turnaround time by creating more concurrent executions that compete for resources.
+
+\subsection{Protocol Implementation}
+
+The client implements the complete ds-sim protocol state machine: \texttt{HELO} → \texttt{AUTH} → \texttt{REDY} loop → \texttt{QUIT}. Within the main loop, the client handles five message types: \texttt{JOBN/JOBP} (schedule new/preempted job), \texttt{JCPL} (job completion), \texttt{RESF/RESR} (server failure/recovery), and \texttt{CHKQ} (queue check). The current implementation schedules jobs immediately upon receipt without reordering or batching, which precludes optimization strategies like job consolidation or predictive placement.
+
+\begin{algorithm}
+\caption{Optimal Server Selection}
+\begin{algorithmic}[1]
+\small
+\Require Job $j$ with resource requirements
+\Ensure Server $s^*$ or None
+\State $S \gets$ \Call{GetCapableServers}{$j$}
+\If{$S = \emptyset$} \Return None \EndIf
+\State $s^* \gets$ None, $W^* \gets \infty$
+\For{each server $s \in S$}
+    \State $W_s \gets$ \Call{EstimateWaitTime}{$s, j$}
+    \State $T_s \gets$ ($s.\text{rJobs}, s.\text{cores}, s.\text{memory}, s.\text{disk}, s.\text{id}$)
+    \If{$s^* = $ None \textbf{or} $(W_s, T_s) < (W^*, T^*)$}
+        \State $s^* \gets s$, $W^* \gets W_s$, $T^* \gets T_s$
+    \EndIf
+\EndFor
+\State \Return $s^*$
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Key Features:} Buffered socket I/O for reliable communication, full ds-sim protocol compliance (HELO, AUTH, REDY, GETS, SCHD), graceful error handling, and efficient memory usage.
+
+\section{Evaluation}
+
+\subsection{Simulation Setup}
+
+\textbf{Test Configurations:} 20 ds-sim configurations varying in complexity (5-100 servers, 50-1000 jobs, 3-12 job types) covering low, medium, high, and very high complexity scenarios.
+
+\textbf{Baseline Algorithms:} (1) \textbf{All-to-Largest (ATL)}: assigns all jobs to largest server, (2) \textbf{First-Fit (FF)}: first capable server, (3) \textbf{Best-Fit (BF)}: smallest sufficient capacity, (4) \textbf{First-Capable (FC)}: first capable by type, (5) \textbf{Fit-Active-First-Capable (FAFC)}: prioritizes active servers.
+
+\textbf{Performance Metrics:} Average turnaround time (ATT), resource utilization (CPU), total rental cost.
+
+\subsection{Results}
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Metric} & \textbf{ATL} & \textbf{FF} & \textbf{BF} & \textbf{FC} & \textbf{FAFC} & \textbf{Ours} \\
+\midrule
+ATT (s) & 294262 & 1830 & 2248 & 328411 & \textbf{1463} & 1977 \\
+Resource Util (\%) & \textbf{100.0} & 71.53 & 67.54 & 97.67 & 71.86 & \textbf{88.92} \\
+Rental Cost & 391 & 552 & 550 & \textbf{378} & 551 & 499 \\
+\bottomrule
+\end{tabular}
+\caption{Average performance across 20 configurations}
+\label{tab:summary}
+\end{table}
+
+\textbf{Turnaround Time:} Our algorithm achieves 1977s average turnaround time, ranking 3rd among 6 algorithms. While FAFC (1463s) and FF (1830s) are faster, our algorithm significantly outperforms ATL (294262s) and FC (328411s). Normalized to FF, our algorithm shows 1.08× turnaround time.
+
+\textbf{Resource Utilization:} Our algorithm achieves \textbf{88.92\% resource utilization}, significantly higher than all practical algorithms (FF: 71.53\%, BF: 67.54\%, FAFC: 71.86\%). Only ATL achieves 100\% by overloading one server, resulting in extremely poor turnaround time. This demonstrates effective load balancing across servers.
+
+\textbf{Total Rental Cost:} Average cost of 499 units positions our algorithm competitively between FC (378) and the FF/BF/FAFC cluster (550-552), showing reasonable cost efficiency.
+
+\textbf{Critical Performance Analysis - Turnaround Time Failure:} The algorithm scored 0/10 on turnaround time performance, failing to outperform baseline algorithms on any of the 20 test configurations. Detailed analysis reveals three fundamental flaws: (1) \textbf{Overly Conservative Wait Time Estimation}: The $\alpha = 0.3$ multiplier systematically overestimates queue processing time, causing the algorithm to avoid servers with even small queues. In practice, servers process jobs faster than predicted, making queue length less impactful than estimated. (2) \textbf{Excessive Load Distribution}: By spreading jobs across more servers to maximize utilization, the algorithm increases startup overhead (booting inactive servers) and prevents job batching on already-active servers. FAFC's strategy of preferring active servers minimizes these overheads. (3) \textbf{No Job Arrival Prediction}: The greedy approach schedules jobs immediately without considering that upcoming jobs might be better suited for currently idle servers, leading to suboptimal long-term placement decisions.
+
+\subsection{Analysis and Discussion}
+
+\textbf{Multi-Objective Performance:} Unlike algorithms optimized for single metrics, our approach balances multiple objectives. FAFC achieves best turnaround time (1463s) but only 71.86\% utilization. Our algorithm sacrifices 35\% longer turnaround time to gain 23.7\% higher utilization, representing a strategic trade-off for production environments where resource efficiency matters.
+
+\textbf{Algorithm Strengths:}
+\begin{enumerate}
+    \item \textbf{High Resource Utilization}: 88.92\% utilization indicates effective load distribution across heterogeneous servers
+    \item \textbf{State Awareness}: Dynamic consideration of server states and queues prevents hotspots
+    \item \textbf{Balanced Performance}: Competitive across all three metrics rather than excelling in one
+    \item \textbf{Scalability}: Consistent performance across configurations of varying complexity
+\end{enumerate}
+
+\textbf{Algorithm Weaknesses:}
+\begin{enumerate}
+    \item \textbf{Suboptimal Turnaround Time}: 35\% slower than FAFC across all configurations. The algorithm never outperformed any baseline on individual test cases, revealing systematic flaws rather than workload-specific issues.
+    \item \textbf{Flawed Wait Time Model}: The linear queue model ($W = Q \times T_{est} / C \times \alpha$) fails to account for parallel job execution on multi-core servers. A server with 8 cores and 2 queued jobs may execute both simultaneously, but the model assumes sequential processing.
+    \item \textbf{Parameter Sensitivity}: Performance critically depends on $\alpha = 0.3$. Testing revealed that decreasing $\alpha$ improves turnaround time but reduces utilization, suggesting the parameter trades off these competing objectives without optimizing either.
+    \item \textbf{Startup Overhead Ignorance}: The algorithm treats booting/inactive servers as viable options (with time penalties) rather than avoiding them. In short-job scenarios, 60-second startup times dwarf actual job execution, making these choices catastrophic for turnaround time.
+    \item \textbf{Greedy Myopia}: Immediate scheduling without job batching or reordering means the algorithm cannot optimize job-to-server affinity or consolidate similar jobs onto the same servers.
+\end{enumerate}
+
+\textbf{Comparative Analysis:}
+
+\textbf{vs. FAFC (Best Performer):} FAFC achieves superior turnaround time (1463s vs 1977s) by aggressively preferring already-active servers, which minimizes startup overhead and keeps jobs on warm servers. The 71.86\% utilization indicates FAFC concentrates load on fewer servers, while our algorithm's 88.92\% comes from spreading jobs across more servers—including booting ones. In config100-short-high.xml, our algorithm's 346s turnaround vs FAFC's 232s (49\% slower) exemplifies this: short jobs (60-120s) on our algorithm hit boot delays (20-60s), adding 30-100\% overhead. FAFC avoids this by keeping active servers busy.
+
+\textbf{vs. FF/BF (Simple Heuristics):} First-Fit and Best-Fit achieve 1830s and 2248s respectively without any state awareness. Our algorithm's queue-aware logic should theoretically improve on these, yet achieves only marginal gains over FF (8\% slower). This suggests the wait time estimation adds complexity without proportional benefit—the simpler FF approach of "use first capable server" accidentally performs well by implicitly keeping early servers active. Our algorithm's 88.92\% utilization vs their 67-72\% confirms we spread load, but this distribution strategy backfires for turnaround time optimization.
+
+\textbf{vs. ATL/FC (Worst Performers):} All-to-Largest (294k seconds) and First-Capable (328k seconds) represent degenerate cases: ATL overloads one server creating massive queues, while FC's arbitrary assignment ignores all server characteristics. Our algorithm significantly outperforms these (149× faster than ATL), demonstrating that \textit{some} intelligence is better than none, even if not optimally tuned.
+
+\textbf{Root Cause Analysis:} The fundamental issue is conflating utilization with performance. High utilization (88.92\%) means servers are busy, but doesn't ensure jobs complete quickly. By distributing jobs to maximize concurrent server usage, the algorithm inadvertently: (1) triggers more server boots (adding latency), (2) prevents job locality on warm servers (cache effects, reduced context switching), and (3) increases queuing variance across servers. FAFC's "active-first" bias accepts lower utilization to minimize these overheads, resulting in 35\% faster turnaround times.
+
+\section{Conclusion}
+
+\textbf{Summary:} This report presented and critically evaluated a resource-aware job scheduling algorithm that prioritizes utilization over turnaround time. The algorithm achieved 88.92\% resource utilization but failed to outperform baselines on turnaround time (0/10 performance score), revealing fundamental trade-offs in distributed scheduling design.
+
+\textbf{Key Findings:}
+\begin{enumerate}
+    \item \textbf{Utilization Success}: 88.92\% resource utilization—23.7\% higher than FAFC and 31\% higher than BF—demonstrates effective load distribution across heterogeneous servers
+    \item \textbf{Turnaround Failure}: 1977s average turnaround time (35\% slower than FAFC, 8\% slower than FF) with 0/20 configuration wins indicates systematic design flaws, not workload-specific issues
+    \item \textbf{Model Limitations}: Linear queue estimation model ($W = Q \times T_{est} / C \times \alpha$) fails to capture parallel execution on multi-core servers, causing conservative wait time predictions that bias against queued servers
+    \item \textbf{Design Trade-off Insight}: High utilization and low turnaround time are conflicting objectives—spreading jobs maximizes utilization but incurs startup overhead and prevents job locality benefits that FAFC leverages
+\end{enumerate}
+
+\textbf{Lessons Learned:} The algorithm's failure highlights critical insights: (1) Maximizing utilization ≠ minimizing turnaround time; busy servers don't guarantee fast job completion. (2) Simple heuristics (FF: "use first capable") often outperform complex models when the models' assumptions are violated. (3) Conservative parameter tuning ($\alpha = 0.3$) prioritizes safety over performance—aggressive algorithms accept risks for speed. (4) Startup overhead dominates in short-job scenarios; active-server preference is critical for real-world performance.
+
+\textbf{Recommendations for Improvement:} To achieve competitive turnaround performance: (1) Adopt "active-first" server selection to minimize boot overhead, (2) Replace linear queue model with parallel-aware estimation that accounts for multi-core simultaneity, (3) Implement dynamic $\alpha$ tuning based on observed job completion rates (learning from actual vs. predicted wait times), (4) Add job batching to enable locality optimization, (5) Introduce workload-specific modes (utilization-focused for batch processing, turnaround-focused for interactive workloads).
+
+\begin{thebibliography}{9}
+\small
+
+\bibitem{tanenbaum2016}
+Tanenbaum, A. S., \& Van Steen, M. (2016). \textit{Distributed systems: principles and paradigms}. Prentice-Hall.
+
+\bibitem{pinedo2016}
+Pinedo, M. L. (2016). \textit{Scheduling: theory, algorithms, and systems}. Springer.
+
+\bibitem{feitelson2005}
+Feitelson, D. G., Rudolph, L., \& Schwiegelshohn, U. (2005). Parallel job scheduling—a status report. \textit{Job Scheduling Strategies for Parallel Processing}, 1-16.
+
+\bibitem{dong2015}
+Dong, F., \& Akl, S. G. (2015). Scheduling algorithms for grid computing: State of the art and open problems. \textit{School of Computing, Queen's University}, 55.
+
+\end{thebibliography}
+
+\appendix
+\section{GenAI Usage Disclosure}
+
+This assignment utilized Generative AI tools (Claude Code by Anthropic) at various stages:
+
+\textbf{Code Development:}
+\begin{itemize}
+    \item \textbf{Tool}: Claude 3.5 Sonnet via Claude Code
+    \item \textbf{Extent}: Assisted in eliminating magic numbers, improving variable naming (\texttt{s} → \texttt{server}), adding docstrings, refactoring function names (\texttt{aggressive\_tat\_schedule} → \texttt{select\_optimal\_server})
+    \item \textbf{Original Contribution}: Core scheduling algorithm logic, wait time estimation formulas, tie-breaking strategy
+\end{itemize}
+
+\textbf{Report Writing:}
+\begin{itemize}
+    \item \textbf{Extent}: LaTeX structure generation, formatting tables/algorithms, example scenario creation, grammar improvements
+    \item \textbf{Original Contribution}: Algorithm design decisions, evaluation methodology, results interpretation, performance analysis, trade-off discussion
+\end{itemize}
+
+\textbf{Declaration:} The fundamental algorithm design, implementation approach, and critical analysis reflect original understanding and work. AI tools enhanced code quality and report presentation without substituting original problem-solving.
+
+\end{document}
